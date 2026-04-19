@@ -10,7 +10,8 @@ import io
 import cv2
 
 os.environ["TRUST_REMOTE_CODE"] = "1"
-pathlib.PosixPath = pathlib.WindowsPath
+if platform.system()=="Windows": #for offline testing
+    pathlib.PosixPath = pathlib.WindowsPath
 
 from anomalib.deploy import TorchInferencer
 
