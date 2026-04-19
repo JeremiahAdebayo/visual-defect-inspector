@@ -1,6 +1,7 @@
 import os
 import base64
 import pathlib
+import platform
 import numpy as np
 from pathlib import Path
 from PIL import Image
@@ -8,7 +9,8 @@ import io
 import cv2
 
 os.environ["TRUST_REMOTE_CODE"] = "1"
-pathlib.PosixPath = pathlib.WindowsPath
+if platform.system()=="Windows":
+    pathlib.PosixPath = pathlib.WindowsPath
 
 from anomalib.deploy import TorchInferencer
 
