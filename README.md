@@ -1,43 +1,30 @@
 # Visual Defect Inspector
 
-An industrial anomaly detection API built on [PatchCore](https://arxiv.org/abs/2106.08265), trained on the [MVTec AD](https://www.mvtec.com/company/research/datasets/mvtec-ad) dataset. Upload an image of a bottle and the API returns an anomaly prediction, confidence score, and a heatmap overlay highlighting suspicious regions.
+An end-to-end industrial anomaly detection system built on [PatchCore](https://arxiv.org/abs/2106.08265), trained on the [MVTec AD](https://www.mvtec.com/company/research/datasets/mvtec-ad) dataset. Upload an image of a bottle and the API returns an anomaly prediction, confidence score, and a heatmap overlay highlighting suspicious regions.
 
 **Live API:** [codehashira73-visual-defect-inspector.hf.space/docs](https://codehashira73-visual-defect-inspector.hf.space/docs)
 
 ---
 
-## Demo
-
-| Normal | Defective | Anomaly Heatmap |
-|--------|-----------|-----------------|
-| ![normal](assets/normal.png) | ![defective](assets/defective.png) | ![heatmap](assets/heatmap.png) |
-
-> **Note:** This model is trained on MVTec AD bottle images — professionally lit, white background, standardized angles. Testing with images from this distribution will give reliable results. Random internet images may return false positives due to distribution shift (different backgrounds, lighting, angles).
-
----
-
 ## How It Works
 
-PatchCore is a memory-based anomaly detection algorithm. Instead of learning what anomalies look like (which is impossible without labeled defect data), it learns what *normal* looks like and flags anything that deviates.
+PatchCore is a memory-based anomaly detection algorithm. Instead of learning what anomalies look like (which requires labeled defect data), it learns what *normal* looks like and flags anything that deviates.
 
 **Training (offline):**
 1. Pass all normal training images through a pretrained CNN backbone (`resnet18`)
-2. Extract intermediate feature maps from `layer2` and `layer3` — these capture both low-level textures and mid-level semantics
-3. Flatten these into patch-level embeddings, one per spatial location
-4. Apply coreset subsampling (ratio=0.1) to compress the embeddings into a representative memory bank — this keeps inference fast without sacrificing much accuracy
+2. Extract intermediate feature maps from `layer2` and `layer3` — capturing both low-level textures and mid-level semantics
+3. Flatten into patch-level embeddings, one per spatial location
+4. Apply coreset subsampling (ratio=0.1) to compress embeddings into a representative memory bank
 
 **Inference (at API call time):**
-1. Pass the uploaded image through the same backbone
-2. Extract patch embeddings from the same layers
-3. For each patch, find its nearest neighbor in the memory bank and compute the distance
-4. Large distance = that patch looks nothing like any normal patch = anomaly
-5. Upsample per-patch distances back to image resolution → anomaly heatmap
-6. Take the maximum patch distance as the image-level anomaly score
-7. Compare score against a threshold computed during training → `NORMAL` or `ANOMALOUS`
+1. Extract patch embeddings from the uploaded image using the same backbone
+2. For each patch, find its nearest neighbors in the memory bank and compute distance
+3. Large distance = patch looks nothing like any normal patch = anomaly
+4. Upsample per-patch distances back to image resolution → anomaly heatmap
+5. Maximum patch distance = image-level anomaly score
+6. Compare against threshold computed at training time → `NORMAL` or `ANOMALOUS`
 
-### Why resnet18 over wide_resnet50_2?
-
-Both backbones performed nearly identically — `wide_resnet50_2` achieved `pixel_AUROC=0.986` vs `resnet18` at `pixel_AUROC=0.978`. Since PatchCore's performance is driven primarily by the coreset memory bank and nearest-neighbor search rather than backbone capacity, the heavier backbone offers no meaningful advantage. `resnet18` was selected for its faster inference time and lower memory footprint at deployment, with negligible cost to detection performance.
+For a detailed breakdown of every technical decision made in this project, see [DECISIONS.md](./DECISIONS.md).
 
 ---
 
@@ -45,19 +32,18 @@ Both backbones performed nearly identically — `wide_resnet50_2` achieved `pixe
 
 Trained and evaluated on the **bottle** category of MVTec AD.
 
-| Backbone | Image AUROC | Pixel AUROC | Image F1 | Model Size |
-|----------|-------------|-------------|----------|------------|
-| wide_resnet50_2 | 1.000 | 0.986 | 0.992 | ~1.5 GB |
-| **resnet18 (deployed)** | **1.000** | **0.978** | **0.992** | **42 MB** |
+| Backbone | Image AUROC | Pixel AUROC | Model Size |
+|----------|-------------|-------------|------------|
+| wide_resnet50_2 | 1.000 | 0.986 | ~1.5 GB |
+| **resnet18 (deployed)** | **1.000** | **0.978** | **42 MB** |
 
-Both runs logged with MLflow under the `visual-defect-inspector` experiment.
+Both runs tracked with MLflow under the `visual-defect-inspector` experiment.
 
 ---
 
 ## API Usage
 
 ### `GET /health`
-Health check endpoint.
 
 ```bash
 curl https://codehashira73-visual-defect-inspector.hf.space/health
@@ -71,7 +57,6 @@ curl https://codehashira73-visual-defect-inspector.hf.space/health
 ---
 
 ### `POST /inspect`
-Upload an image and get an anomaly prediction.
 
 ```bash
 curl -X POST \
@@ -91,8 +76,8 @@ curl -X POST \
 | Field | Type | Description |
 |-------|------|-------------|
 | `prediction` | string | `"NORMAL"` or `"ANOMALOUS"` |
-| `anomaly_score` | float | Score between 0 and 1. Higher = more anomalous |
-| `heatmap_base64` | string | Base64-encoded JPEG of the original image overlaid with the anomaly heatmap (blue = normal, red = anomalous) |
+| `anomaly_score` | float | Higher = more anomalous |
+| `heatmap_base64` | string | Base64 JPEG — original image overlaid with anomaly heatmap (blue = normal, red = anomalous) |
 
 To render the heatmap in Python:
 ```python
@@ -105,6 +90,8 @@ image = Image.open(io.BytesIO(heatmap_bytes))
 image.show()
 ```
 
+> **Note:** This model is trained on MVTec AD bottle images — white background, controlled lighting, standardized angles. Images from this distribution will give reliable results. Random internet images may return false positives due to distribution shift.
+
 ---
 
 ## Project Structure
@@ -113,16 +100,75 @@ image.show()
 visual-defect-inspector/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py          # FastAPI app — routes, CORS, validation
-│   └── inference.py     # Model loading (singleton) + predict logic
+│   ├── main.py              # FastAPI app — routes, CORS, validation
+│   └── inference.py         # Model loading (singleton) + predict logic
+├── configs/
+│   └── resnet18_bottle.yaml # Full experiment config — backbone, data, engine, MLflow
 ├── saved_model/
 │   └── weights/
 │       └── torch/
-│           └── model.pt # PatchCore model with memory bank (via Git LFS)
-├── Anomaly_detection.ipynb  # Training, evaluation, MLflow logging
+│           └── model.pt     # PatchCore model with memory bank (via Git LFS)
+├── train.py                 # Config-driven training pipeline
+├── evaluate.py              # Standalone evaluation on saved model
+├── Anomaly_detection.ipynb  # Exploration, experimentation, MLflow logging
+├── DECISIONS.md             # Technical decision log
 ├── Dockerfile
 ├── requirements.txt
 └── .gitignore
+```
+
+---
+
+## Local Setup
+
+**Prerequisites:** Python 3.10+, Git LFS installed
+
+```bash
+# Clone the repo (Git LFS required to pull model weights)
+git clone https://github.com/JeremiahAdebayo/visual-defect-inspector.git
+cd visual-defect-inspector
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### Train
+
+```bash
+python train.py --config configs/resnet18_bottle.yaml
+```
+
+This downloads the MVTec AD dataset automatically, trains PatchCore, logs metrics and config to MLflow, and saves the model + memory bank + metadata to `saved_model/`.
+
+To run a different experiment, duplicate the config and modify it:
+
+```bash
+cp configs/resnet18_bottle.yaml configs/wide_resnet50_bottle.yaml
+# edit the backbone field
+python train.py --config configs/wide_resnet50_bottle.yaml
+```
+
+### Evaluate
+
+```bash
+python evaluate.py --config configs/resnet18_bottle.yaml
+```
+
+Loads the saved model and runs evaluation on the MVTec AD test set. Prints image AUROC, pixel AUROC, and F1.
+
+### Run the API locally
+
+```bash
+uvicorn app.main:app --reload
+```
+
+API available at `http://127.0.0.1:8000/docs`
+
+### Run with Docker
+
+```bash
+docker build -t visual-defect-inspector .
+docker run -p 7860:7860 visual-defect-inspector
 ```
 
 ---
@@ -139,45 +185,20 @@ visual-defect-inspector/
 | Containerization | Docker |
 | Deployment | Hugging Face Spaces |
 | Model storage | Git LFS |
-
----
-
-## Local Setup
-
-**Prerequisites:** Python 3.10+, Git LFS installed
-
-```bash
-# Clone the repo
-git clone https://github.com/JeremiahAdebayo/visual-defect-inspector.git
-cd visual-defect-inspector
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run the API
-uvicorn app.main:app --reload
-```
-
-API will be available at `http://127.0.0.1:8000/docs`
-
-**With Docker:**
-```bash
-docker build -t visual-defect-inspector .
-docker run -p 7860:7860 visual-defect-inspector
-```
+| Config management | PyYAML |
 
 ---
 
 ## Limitations
 
 - Trained on a single MVTec AD category (bottle). Does not generalize to other object types without retraining.
-- Sensitive to distribution shift — images must closely resemble the MVTec training distribution (white background, controlled lighting, top-down angle) for reliable results.
-- Anomaly threshold is fixed at training time. May need recalibration for production use cases with different defect types.
+- Sensitive to distribution shift — images must closely resemble the MVTec training distribution for reliable results.
+- Anomaly threshold is fixed at training time. May need recalibration for different defect types in production.
 
 ---
 
 ## Author
 
 **Jeremiah Adebayo**  
-3rd Year Information Technology Student, University of Iloilo  
-[GitHub](https://github.com/JeremiahAdebayo) · [Hugging Face](https://huggingface.co/CodeHashira73)
+3rd Year Information Technology Student, University of Ilorin  
+[GitHub](https://github.com/JeremiahAdebayo) · [Hugging Face](https://huggingface.co/CodeHashira73) · [LinkedIn](https://linkedin.com/in/jadebayo24)
