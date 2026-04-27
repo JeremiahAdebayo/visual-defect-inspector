@@ -108,7 +108,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         type=str,
-        default="resnet18_config.yaml",
+        default="configs/resnet18_config.yaml",
         help="Path to config file"
     )
     args = parser.parse_args()
