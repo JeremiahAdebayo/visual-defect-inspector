@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-anomalib
+anomalib==1.1.0
 opencv-python-headless
 pillow
 numpy
